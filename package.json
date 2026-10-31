@@ -1,0 +1,17 @@
+{
+  "name": "opengemini",
+  "version": "2.0.0",
+  "description": "OpenGemini — Local & BYOK AI Workspace replicating Google Gemini & Antigravity 2.0 (Chat, Autonomous Task Agent, Canvas, Notebooks, Deep Research, Library, Images, Scheduled, Students, Gems & Skills)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
