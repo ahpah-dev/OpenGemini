@@ -22,7 +22,11 @@ const DEFAULT_SETTINGS = {
   anthropicApiKey: '',
   openrouterApiKey: '',
   groqApiKey: '',
-  imageProvider: 'svg-llm', // 'svg-llm' | 'pollinations' | 'openai' | 'gemini' | 'sd-webui'
+  imageProvider: 'qwen-image-local', // 'qwen-image-local' | 'nano-banana' | 'svg-llm' | 'pollinations' | 'openai' | 'sd-webui'
+  qwenQuant: 'auto', // 'auto' | 'Q4_K_M' | 'Q5_K_M' | 'Q6_K' | 'Q8_0'
+  sdBackend: 'auto', // 'auto' | 'vulkan' | 'cuda12' | 'cpu'
+  imageAspectRatio: '1:1',
+  imageResolution: '1K',
   sdWebUiUrl: 'http://127.0.0.1:7860',
   workspacePath: path.resolve(__dirname, '..', '..', '..'),
   approvalPolicy: 'always-proceed', // 'always-proceed' | 'request-review' | 'strict'

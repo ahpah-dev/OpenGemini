@@ -111,133 +111,420 @@ export function renderLibraryHub(container, app) {
 
 export function renderImagesHub(container, app) {
   const { state, toast } = app;
+  let activeProvider = state.settings.imageProvider || 'qwen-image-local';
+  let activeAspect = '1:1';
+  let activeSize = '1K';
+  let imageStatus = state.imageStatus || null;
+  let isSettingUp = false;
+  let setupProgress = { percent: 0, message: '', step: '' };
   let selectedRemixSvg = '';
+  let activeLightbox = null;
+
+  async function refreshStatus() {
+    try {
+      const res = await fetch('/api/images/status');
+      if (res.ok) {
+        imageStatus = await res.json();
+        state.imageStatus = imageStatus;
+      }
+    } catch {}
+  }
+
+  function startAutoSetup() {
+    if (isSettingUp) return;
+    isSettingUp = true;
+    setupProgress = { percent: 2, message: 'Initializing auto-setup pipeline...', step: 'init' };
+    draw();
+
+    const evtSource = new EventSource('/api/images/setup');
+    evtSource.addEventListener('progress', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setupProgress = data;
+        draw();
+      } catch {}
+    });
+
+    evtSource.addEventListener('done', (e) => {
+      evtSource.close();
+      isSettingUp = false;
+      try {
+        const data = JSON.parse(e.data);
+        if (data.status) imageStatus = data.status;
+      } catch {}
+      toast('Qwen 2.1 Image Uncensored is ready!');
+      refreshStatus().then(draw);
+    });
+
+    evtSource.addEventListener('error', (e) => {
+      evtSource.close();
+      isSettingUp = false;
+      let errMsg = 'Auto-setup encountered an error. Check console/logs.';
+      try {
+        const data = JSON.parse(e.data || '{}');
+        if (data.error) errMsg = data.error;
+      } catch {}
+      toast(`Setup error: ${errMsg}`);
+      draw();
+    });
+  }
 
   function draw() {
     const images = state.images || [];
+    const qwenObj = imageStatus?.qwen || {};
+    const isQwenReady = Boolean(qwenObj.ready || (imageStatus?.runnerReady && imageStatus?.weightsReady));
+    const vramMb = qwenObj.vramMb || imageStatus?.vramMb;
+    const vramInfo = vramMb ? `${Math.round(vramMb / 1024)}GB VRAM (${qwenObj.quant || 'Q5_K_M'} / Vulkan)` : 'Vulkan GPU acceleration';
+
     container.innerHTML = `
       <div class="hub-inner">
         <div class="hub-header">
           <div>
             <h2 class="hub-title">Images Studio</h2>
-            <p class="hub-subtitle">Generate illustrations &amp; UI graphics locally via your LLM (SVG Studio), Pollinations Flux, OpenAI DALL-E 3, or Local Stable Diffusion.</p>
+            <p class="hub-subtitle">State-of-the-art image generation with Qwen 2.1 Image Uncensored (Local Vulkan GGUF) and Nano Banana 2.1 (Google Gemini multimodal API).</p>
           </div>
         </div>
 
-        <div class="hub-card" style="margin-bottom:22px;">
+        <!-- Provider Selection Tabs -->
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+          <button class="mini-pill img-prov-tab ${activeProvider === 'qwen-image-local' ? 'active' : ''}" data-p="qwen-image-local" style="padding:7px 16px;font-size:13px;display:flex;align-items:center;gap:6px;">
+            <span>⚡ Qwen 2.1 Image Uncensored</span>
+            <span class="cap-badge ${isQwenReady ? 'green' : ''}" style="font-size:10.5px;">${isQwenReady ? 'Local Ready' : 'Local GGUF'}</span>
+          </button>
+          <button class="mini-pill img-prov-tab ${activeProvider === 'nano-banana' ? 'active' : ''}" data-p="nano-banana" style="padding:7px 16px;font-size:13px;display:flex;align-items:center;gap:6px;">
+            <span>🍌 Nano Banana 2.1</span>
+            <span class="cap-badge" style="font-size:10.5px;">Gemini API</span>
+          </button>
+          <button class="mini-pill img-prov-tab ${activeProvider === 'svg-llm' ? 'active' : ''}" data-p="svg-llm" style="padding:7px 16px;font-size:13px;">
+            🎨 Local Vector Studio (SVG)
+          </button>
+          <button class="mini-pill img-prov-tab ${activeProvider === 'pollinations' ? 'active' : ''}" data-p="pollinations" style="padding:7px 16px;font-size:13px;">
+            ✨ Pollinations Flux (Zero-Key)
+          </button>
+        </div>
+
+        <!-- Qwen Local Engine Setup Card (if local selected) -->
+        ${
+          activeProvider === 'qwen-image-local'
+            ? `
+          <div class="hub-card" style="margin-bottom:18px;background:${isQwenReady ? 'var(--bg-subtle)' : '#fefce8'};border-color:${isQwenReady ? 'var(--border-subtle)' : '#fde047'};">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+              <div>
+                <strong style="font-size:14.5px;display:flex;align-items:center;gap:7px;">
+                  ${isQwenReady ? '✅ Qwen 2.1 Image Engine Ready' : '⚡ 1-Click Auto Setup: Qwen 2.1 Image Uncensored'}
+                </strong>
+                <p style="margin:4px 0 0;font-size:12.5px;color:var(--text-muted);">
+                  ${
+                    isQwenReady
+                      ? `Vulkan GPU Runner &amp; Qwen 2.1 weights ready. ${vramInfo} — 100% private &amp; uncensored on-device.`
+                      : `Downloads Vulkan-accelerated sd-cli runner and Qwen 2.1 Uncensored denoiser GGUF (${vramInfo}).`
+                  }
+                </p>
+              </div>
+              ${
+                !isQwenReady && !isSettingUp
+                  ? `<button id="qwen-setup-btn" class="btn-primary" style="padding:8px 18px;font-size:13px;">🚀 Auto Setup Qwen 2.1 (Local)</button>`
+                  : isQwenReady
+                  ? `<span class="cap-badge green" style="padding:5px 12px;font-size:12px;">Vulkan Accelerated</span>`
+                  : ''
+              }
+            </div>
+
+            ${
+              isSettingUp
+                ? `
+              <div style="margin-top:14px;padding:12px;background:var(--bg-surface);border-radius:10px;border:1px solid var(--border-subtle);">
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;font-weight:600;margin-bottom:6px;">
+                  <span>${escapeHtml(setupProgress.message || 'Downloading components...')}</span>
+                  <span>${Math.round(setupProgress.percent || 0)}%</span>
+                </div>
+                <div style="height:7px;background:var(--bg-subtle);border-radius:999px;overflow:hidden;">
+                  <div style="height:100%;background:var(--accent-blue);width:${Math.min(100, Math.max(0, setupProgress.percent || 0))}%;transition:width 0.2s ease;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-top:5px;">
+                  <span>Step: ${escapeHtml(setupProgress.step || 'downloading')}</span>
+                  <span>Auto-configuring GPU acceleration &amp; quant</span>
+                </div>
+              </div>`
+                : ''
+            }
+          </div>`
+            : ''
+        }
+
+        <!-- Nano Banana Key Check (if Nano Banana selected) -->
+        ${
+          activeProvider === 'nano-banana' && !state.settings.geminiApiKey
+            ? `
+          <div class="hub-card" style="margin-bottom:18px;background:#fef2f2;border-color:#fca5a5;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+              <div>
+                <strong style="font-size:14px;color:#991b1b;">⚠️ Google Gemini API Key Required</strong>
+                <p style="margin:2px 0 0;font-size:12px;color:#7f1d1d;">Nano Banana 2.1 uses Google's multimodal image generation API (BYOK). Your key is stored strictly on your machine.</p>
+              </div>
+              <button id="add-gemini-key-btn" class="btn-primary" style="padding:6px 14px;font-size:12px;">Add Key in Settings</button>
+            </div>
+          </div>`
+            : ''
+        }
+
+        <!-- Image Prompt & Generation Control Card -->
+        <div class="hub-card" style="margin-bottom:24px;">
           ${
             selectedRemixSvg
-              ? `<div class="ctx-chip" style="width:fit-content;">✨ Remixing selected vector artwork <button id="clear-remix-btn">×</button></div>`
+              ? `<div class="ctx-chip" style="width:fit-content;margin-bottom:10px;">✨ Remixing selected vector artwork <button id="clear-remix-btn">×</button></div>`
               : ''
           }
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <input id="img-prompt-input" class="input-field" style="flex:1;min-width:240px;" placeholder="${selectedRemixSvg ? 'Describe how to modify this artwork (e.g., Change sky to sunset orange)...' : 'Describe an image to create (e.g., Minimalist isometric cyberpunk coffee shop at dusk)...'}" />
-            <select id="img-provider-select" class="select-field" style="width:225px;">
-              <option value="svg-llm" ${state.settings.imageProvider === 'svg-llm' ? 'selected' : ''}>Local LLM Vector Studio (Offline)</option>
-              <option value="pollinations" ${state.settings.imageProvider === 'pollinations' ? 'selected' : ''}>Pollinations Flux (Zero-Key)</option>
-              <option value="openai" ${state.settings.imageProvider === 'openai' ? 'selected' : ''}>OpenAI DALL-E 3 (BYOK)</option>
-              <option value="sd-webui" ${state.settings.imageProvider === 'sd-webui' ? 'selected' : ''}>Local SD WebUI (127.0.0.1:7860)</option>
-            </select>
-            <select id="img-style-select" class="select-field" style="width:145px;">
-              <option value="vivid">Vivid Modern</option>
-              <option value="minimalist geometric">Minimalist</option>
-              <option value="cyberpunk neon">Neon Synth</option>
-              <option value="blueprint diagram">Blueprint</option>
-            </select>
-            <button id="img-gen-btn" class="btn-primary">Generate</button>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <input id="img-prompt-input" class="input-field" style="flex:1;min-width:260px;" placeholder="${
+              activeProvider === 'qwen-image-local'
+                ? 'Describe image for Qwen 2.1 Uncensored (e.g. Masterpiece, high fantasy castle at twilight, intricate detail)...'
+                : activeProvider === 'nano-banana'
+                ? 'Ask Nano Banana 2.1 (e.g. Cinematic wide photograph of futuristic Tokyo market with neon reflections)...'
+                : 'Describe an image or vector illustration...'
+            }" />
+            <button id="img-gen-btn" class="btn-primary" style="padding:10px 22px;font-size:13.5px;min-width:110px;">Create</button>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
-            <button class="mini-pill img-preset" data-p="Futuristic glass observatory floating above clouds, soft pastel gradients">🏛️ Sky Observatory</button>
-            <button class="mini-pill img-preset" data-p="Cozy Japanese ramen stall at night with warm lantern glow">🍜 Night Ramen Stall</button>
-            <button class="mini-pill img-preset" data-p="Clean neural network architecture diagram with glowing nodes">🧠 Neural Diagram</button>
+
+          <!-- Aspect Ratio & Size Selectors -->
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span style="font-size:12px;color:var(--text-muted);margin-right:4px;">Aspect Ratio:</span>
+              ${['1:1', '16:9', '9:16', '4:3', '3:4']
+                .map(
+                  (ar) =>
+                    `<button class="mini-pill aspect-pill ${activeAspect === ar ? 'active' : ''}" data-ar="${ar}" style="padding:4px 10px;font-size:11.5px;">${ar} ${ar === '1:1' ? 'Square' : ar === '16:9' ? 'Wide' : ar === '9:16' ? 'Story' : ar === '4:3' ? 'Photo' : 'Tall'}</button>`
+                )
+                .join('')}
+            </div>
+
+            ${
+              activeProvider === 'nano-banana'
+                ? `
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--text-muted);margin-right:4px;">Resolution:</span>
+                ${['1K', '2K']
+                  .map(
+                    (sz) =>
+                      `<button class="mini-pill size-pill ${activeSize === sz ? 'active' : ''}" data-sz="${sz}" style="padding:4px 10px;font-size:11.5px;">${sz}</button>`
+                  )
+                  .join('')}
+              </div>`
+                : ''
+            }
+          </div>
+
+          <!-- Quick Presets -->
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;">
+            <button class="mini-pill img-preset" data-p="Futuristic glass greenhouse observatory above alpine clouds, soft morning light">🏛️ Sky Observatory</button>
+            <button class="mini-pill img-preset" data-p="Cozy Japanese ramen stall in rainy Kyoto alley at night, warm neon glow">🍜 Night Ramen Stall</button>
+            <button class="mini-pill img-preset" data-p="Hyperdetailed cybernetic mechanical eye, macro lens, bioluminescent blue circuitry">👁️ Cyberpunk Macro</button>
+            <button class="mini-pill img-preset" data-p="Minimalist Scandinavian living room interior with monstera plant and sunlight beams">🌿 Nordic Interior</button>
           </div>
         </div>
 
-        <div class="card-grid">
-          ${images
-            .map(
-              (img) => `
-            <div class="hub-card" style="padding:12px;">
-              <div style="border-radius:12px;overflow:hidden;background:var(--bg-subtle);aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;">
-                ${
-                  img.svgContent
-                    ? `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">${img.svgContent}</div>`
-                    : `<img src="${escapeHtml(img.imageUrl || '')}" alt="${escapeHtml(img.prompt)}" style="width:100%;height:100%;object-fit:cover;" />`
-                }
-              </div>
-              <div style="font-size:12.5px;font-weight:500;">${escapeHtml(img.prompt)}</div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:auto;">
-                <span class="cap-badge">${escapeHtml(img.provider)}</span>
-                <div style="display:flex;gap:6px;">
-                  ${img.svgContent ? `<button class="mini-pill remix-svg-btn" data-id="${escapeHtml(img.id)}">Remix</button>` : ''}
-                  <button class="mini-pill del-img-btn" data-id="${escapeHtml(img.id)}">Delete</button>
-                </div>
-              </div>
-            </div>`
-            )
-            .join('')}
+        <!-- Generated Images Gallery -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <h3 style="margin:0;font-size:16px;">🖼️ Gallery (${images.length})</h3>
+        </div>
+
+        <div class="card-grid" style="grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:16px;">
+          ${
+            images.length
+              ? images
+                  .map(
+                    (img) => `
+                <div class="hub-card" style="padding:10px;display:flex;flex-direction:column;gap:8px;">
+                  <div class="img-preview-box" data-id="${escapeHtml(img.id)}" style="cursor:pointer;border-radius:12px;overflow:hidden;background:var(--bg-subtle);aspect-ratio:${img.aspectRatio === '16:9' ? '16/9' : img.aspectRatio === '9:16' ? '9/16' : img.aspectRatio === '4:3' ? '4/3' : img.aspectRatio === '3:4' ? '3/4' : '1/1'};display:flex;align-items:center;justify-content:center;position:relative;">
+                    ${
+                      img.svgContent
+                        ? `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">${img.svgContent}</div>`
+                        : `<img src="${escapeHtml(img.imageUrl || '')}" alt="${escapeHtml(img.prompt)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;transition:transform 0.2s;" />`
+                    }
+                  </div>
+                  <div style="font-size:12.5px;font-weight:500;line-height:1.35;max-height:36px;overflow:hidden;text-overflow:ellipsis;">
+                    ${escapeHtml(img.prompt)}
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:4px;">
+                    <div style="display:flex;gap:4px;align-items:center;">
+                      <span class="cap-badge" style="font-size:10.5px;">${escapeHtml(img.model || img.provider)}</span>
+                      ${img.aspectRatio ? `<span class="cap-badge" style="font-size:10px;">${escapeHtml(img.aspectRatio)}</span>` : ''}
+                    </div>
+                    <div style="display:flex;gap:4px;">
+                      ${
+                        img.imageUrl
+                          ? `<a href="${escapeHtml(img.imageUrl)}" download="opengemini-${escapeHtml(img.id)}.png" class="mini-pill" title="Download image" style="text-decoration:none;">⬇️</a>`
+                          : ''
+                      }
+                      <button class="mini-pill remix-img-btn" data-id="${escapeHtml(img.id)}" title="Remix in prompt">Remix</button>
+                      <button class="mini-pill del-img-btn" data-id="${escapeHtml(img.id)}" title="Delete">✕</button>
+                    </div>
+                  </div>
+                </div>`
+                  )
+                  .join('')
+              : `
+              <div class="hub-card" style="grid-column:1/-1;text-align:center;padding:48px 24px;">
+                <p style="margin:0 0 8px;font-size:15px;color:var(--text-secondary);font-weight:500;">No images generated yet</p>
+                <p style="margin:0;font-size:13px;color:var(--text-muted);">Pick Qwen 2.1 Uncensored (Local) or Nano Banana 2.1 above to start creating!</p>
+              </div>`
+          }
         </div>
       </div>
     `;
 
+    // Provider Tabs
+    container.querySelectorAll('.img-prov-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activeProvider = btn.dataset.p;
+        draw();
+      });
+    });
+
+    // Aspect Ratio Pills
+    container.querySelectorAll('.aspect-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activeAspect = btn.dataset.ar;
+        draw();
+      });
+    });
+
+    // Resolution Pills
+    container.querySelectorAll('.size-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activeSize = btn.dataset.sz;
+        draw();
+      });
+    });
+
+    // Auto Setup Button
+    container.querySelector('#qwen-setup-btn')?.addEventListener('click', startAutoSetup);
+
+    // Add Gemini Key Button
+    container.querySelector('#add-gemini-key-btn')?.addEventListener('click', () => app.openSettingsModal());
+
+    // Prompt Presets
+    container.querySelectorAll('.img-preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const inp = container.querySelector('#img-prompt-input');
+        if (inp) {
+          inp.value = btn.dataset.p;
+          inp.focus();
+        }
+      });
+    });
+
+    // Clear SVG remix
     container.querySelector('#clear-remix-btn')?.addEventListener('click', () => {
       selectedRemixSvg = '';
       draw();
     });
 
-    container.querySelectorAll('.img-preset').forEach((b) => {
-      b.addEventListener('click', () => {
-        container.querySelector('#img-prompt-input').value = b.dataset.p;
-      });
-    });
-
-    container.querySelectorAll('.remix-svg-btn').forEach((b) => {
-      b.addEventListener('click', () => {
-        const found = state.images.find((x) => x.id === b.dataset.id);
-        if (found?.svgContent) {
-          selectedRemixSvg = found.svgContent;
-          draw();
-          container.querySelector('#img-prompt-input')?.focus();
+    // Remix image in prompt
+    container.querySelectorAll('.remix-img-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const found = state.images.find((x) => x.id === btn.dataset.id);
+        if (found) {
+          const inp = container.querySelector('#img-prompt-input');
+          if (inp) {
+            inp.value = found.prompt;
+            inp.focus();
+          }
+          if (found.svgContent) {
+            selectedRemixSvg = found.svgContent;
+            activeProvider = 'svg-llm';
+            draw();
+          } else if (found.provider) {
+            activeProvider = found.provider;
+            draw();
+          }
         }
       });
     });
 
-    container.querySelectorAll('.del-img-btn').forEach((b) => {
-      b.addEventListener('click', async () => {
-        await apiDelete(`/api/images/${encodeURIComponent(b.dataset.id)}`);
-        state.images = state.images.filter((x) => x.id !== b.dataset.id);
+    // Delete image
+    container.querySelectorAll('.del-img-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await apiDelete(`/api/images/${encodeURIComponent(btn.dataset.id)}`);
+        state.images = state.images.filter((x) => x.id !== btn.dataset.id);
         draw();
       });
     });
 
+    // Lightbox modal on image click
+    container.querySelectorAll('.img-preview-box').forEach((box) => {
+      box.addEventListener('click', () => {
+        const found = state.images.find((x) => x.id === box.dataset.id);
+        if (!found) return;
+        app.openSimpleModal(
+          `Image Preview: ${found.prompt.slice(0, 48)}...`,
+          `
+          <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+            <div style="max-height:70vh;border-radius:12px;overflow:hidden;background:#000;">
+              ${
+                found.svgContent
+                  ? `<div style="max-width:800px;max-height:70vh;">${found.svgContent}</div>`
+                  : `<img src="${escapeHtml(found.imageUrl)}" style="max-width:100%;max-height:70vh;object-fit:contain;display:block;" />`
+              }
+            </div>
+            <div style="width:100%;display:flex;justify-content:space-between;align-items:center;font-size:12.5px;">
+              <span style="color:var(--text-muted);">${escapeHtml(found.model || found.provider)} • ${escapeHtml(found.aspectRatio || '1:1')}</span>
+              ${
+                found.imageUrl
+                  ? `<a href="${escapeHtml(found.imageUrl)}" download="opengemini-${escapeHtml(found.id)}.png" class="btn-primary" style="padding:6px 14px;text-decoration:none;">Download Image</a>`
+                  : ''
+              }
+            </div>
+          </div>
+        `
+        );
+      });
+    });
+
+    // Trigger Generation
     const genBtn = container.querySelector('#img-gen-btn');
     const promptInput = container.querySelector('#img-prompt-input');
+
     const triggerGen = async () => {
-      const prompt = promptInput.value.trim();
+      const prompt = promptInput?.value.trim();
       if (!prompt) return;
+
+      if (activeProvider === 'nano-banana' && !state.settings.geminiApiKey) {
+        toast('Google Gemini API key required for Nano Banana 2.1');
+        app.openSettingsModal();
+        return;
+      }
+
       genBtn.disabled = true;
-      genBtn.textContent = 'Creating...';
+      genBtn.textContent = 'Generating...';
       try {
         const created = await apiPost('/api/images/generate', {
           prompt,
-          provider: container.querySelector('#img-provider-select').value,
-          style: container.querySelector('#img-style-select').value,
+          provider: activeProvider,
+          aspectRatio: activeAspect,
+          imageSize: activeSize,
+          style: 'vivid',
           previousSvg: selectedRemixSvg
         });
         state.images.unshift(created);
         selectedRemixSvg = '';
-        toast('Image generated!');
+        toast('Image created successfully!');
         draw();
       } catch (err) {
         toast(`Image generation failed: ${err.message}`);
         genBtn.disabled = false;
-        genBtn.textContent = 'Generate';
+        genBtn.textContent = 'Create';
       }
     };
+
     genBtn?.addEventListener('click', triggerGen);
     promptInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') triggerGen();
     });
+  }
+
+  refreshStatus().then(draw);
+}
   }
 
   draw();

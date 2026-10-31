@@ -3,6 +3,7 @@
  * Supports: Ollama, LM Studio, llama.cpp, Custom OpenAI-compatible,
  * Google Gemini, OpenAI, Anthropic, OpenRouter, and Groq.
  */
+const { CLOUD_CATALOG } = require('./catalog');
 
 class ThinkTagStreamParser {
   constructor(onThinking, onContent) {
@@ -219,49 +220,7 @@ async function discoverModels(settings) {
   }
 
   // 5. BYOK Cloud Catalog (always visible so users can switch or add keys easily)
-  const cloudCatalog = [
-    // Google Gemini (BYOK)
-    { id: 'gemini-4-argon', name: 'Gemini 4 Argon', provider: 'gemini', providerLabel: 'Google Gemini (BYOK)', keyField: 'geminiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', provider: 'gemini', providerLabel: 'Google Gemini (BYOK)', keyField: 'geminiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'gemini-3.8-pro', name: 'Gemini 3.8 Pro', provider: 'gemini', providerLabel: 'Google Gemini (BYOK)', keyField: 'geminiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'gemini-3.0-pro', name: 'Gemini 3.0 Pro', provider: 'gemini', providerLabel: 'Google Gemini (BYOK)', keyField: 'geminiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'gemini-3.0-flash', name: 'Gemini 3.0 Flash', provider: 'gemini', providerLabel: 'Google Gemini (BYOK)', keyField: 'geminiApiKey', capabilities: ['tools', 'vision'] },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini', providerLabel: 'Google Gemini (BYOK)', keyField: 'geminiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini', providerLabel: 'Google Gemini (BYOK)', keyField: 'geminiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-
-    // OpenAI (BYOK)
-    { id: 'gpt-5', name: 'GPT-5', provider: 'openai', providerLabel: 'OpenAI (BYOK)', keyField: 'openaiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'o4', name: 'o4', provider: 'openai', providerLabel: 'OpenAI (BYOK)', keyField: 'openaiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'o4-mini', name: 'o4-mini', provider: 'openai', providerLabel: 'OpenAI (BYOK)', keyField: 'openaiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'o3', name: 'o3', provider: 'openai', providerLabel: 'OpenAI (BYOK)', keyField: 'openaiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'o3-mini', name: 'o3-mini', provider: 'openai', providerLabel: 'OpenAI (BYOK)', keyField: 'openaiApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'gpt-4.5', name: 'GPT-4.5', provider: 'openai', providerLabel: 'OpenAI (BYOK)', keyField: 'openaiApiKey', capabilities: ['tools', 'vision'] },
-    { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', providerLabel: 'OpenAI (BYOK)', keyField: 'openaiApiKey', capabilities: ['tools', 'vision'] },
-
-    // Anthropic (BYOK)
-    { id: 'claude-4-opus-latest', name: 'Claude 4 Opus', provider: 'anthropic', providerLabel: 'Anthropic (BYOK)', keyField: 'anthropicApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'claude-4-sonnet-latest', name: 'Claude 4 Sonnet', provider: 'anthropic', providerLabel: 'Anthropic (BYOK)', keyField: 'anthropicApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'claude-3-8-sonnet-latest', name: 'Claude 3.8 Sonnet', provider: 'anthropic', providerLabel: 'Anthropic (BYOK)', keyField: 'anthropicApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet', provider: 'anthropic', providerLabel: 'Anthropic (BYOK)', keyField: 'anthropicApiKey', capabilities: ['tools', 'thinking', 'vision'] },
-    { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku', provider: 'anthropic', providerLabel: 'Anthropic (BYOK)', keyField: 'anthropicApiKey', capabilities: ['tools', 'vision'] },
-
-    // OpenRouter (BYOK)
-    { id: 'deepseek/deepseek-r2', name: 'DeepSeek R2', provider: 'openrouter', providerLabel: 'OpenRouter (BYOK)', keyField: 'openrouterApiKey', capabilities: ['thinking', 'tools'] },
-    { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1', provider: 'openrouter', providerLabel: 'OpenRouter (BYOK)', keyField: 'openrouterApiKey', capabilities: ['thinking'] },
-    { id: 'qwen/qwen-3.5-coder-32b', name: 'Qwen 3.5 Coder 32B', provider: 'openrouter', providerLabel: 'OpenRouter (BYOK)', keyField: 'openrouterApiKey', capabilities: ['tools', 'thinking'] },
-    { id: 'qwen/qwen-3-coder-max', name: 'Qwen 3 Coder Max', provider: 'openrouter', providerLabel: 'OpenRouter (BYOK)', keyField: 'openrouterApiKey', capabilities: ['tools', 'thinking'] },
-    { id: 'meta-llama/llama-4-70b-instruct', name: 'Llama 4 70B Instruct', provider: 'openrouter', providerLabel: 'OpenRouter (BYOK)', keyField: 'openrouterApiKey', capabilities: ['tools', 'thinking'] },
-    { id: 'google/gemma-4-26b', name: 'Gemma 4 26B', provider: 'openrouter', providerLabel: 'OpenRouter (BYOK)', keyField: 'openrouterApiKey', capabilities: ['tools', 'thinking'] },
-    { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'openrouter', providerLabel: 'OpenRouter (BYOK)', keyField: 'openrouterApiKey', capabilities: ['tools', 'thinking'] },
-
-    // Groq (BYOK)
-    { id: 'llama-4-70b-versatile', name: 'Llama 4 70B (Groq)', provider: 'groq', providerLabel: 'Groq (BYOK)', keyField: 'groqApiKey', capabilities: ['tools', 'thinking'] },
-    { id: 'qwen-3.5-coder-32b', name: 'Qwen 3.5 Coder (Groq)', provider: 'groq', providerLabel: 'Groq (BYOK)', keyField: 'groqApiKey', capabilities: ['tools', 'thinking'] },
-    { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill 70B (Groq)', provider: 'groq', providerLabel: 'Groq (BYOK)', keyField: 'groqApiKey', capabilities: ['thinking'] },
-    { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B (Groq)', provider: 'groq', providerLabel: 'Groq (BYOK)', keyField: 'groqApiKey', capabilities: ['tools'] }
-  ];
-
-  for (const item of cloudCatalog) {
+  for (const item of CLOUD_CATALOG) {
     models.push({
       id: item.id,
       name: item.name,

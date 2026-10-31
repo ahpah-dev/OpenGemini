@@ -19,11 +19,20 @@ const {
   runShellCommand,
   fetchReadableUrl
 } = require('./services/tools');
+const {
+  getImageStatus,
+  setupQwen,
+  generateQwenLocal,
+  generateNanoBanana,
+  GENERATED_DIR
+} = require('./services/imagegen');
+const { CLOUD_CATALOG, RECOMMENDED_LOCAL } = require('./services/catalog');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '30mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use('/generated', express.static(GENERATED_DIR));
 
 function initSse(res) {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -49,7 +58,8 @@ app.get('/api/bootstrap', async (req, res) => {
       images,
       scheduled,
       gems,
-      customizations
+      customizations,
+      imageStatus
     ] = await Promise.all([
       discoverModels(settings),
       storage.getChats(),
@@ -58,13 +68,15 @@ app.get('/api/bootstrap', async (req, res) => {
       storage.getImages(),
       storage.getScheduled(),
       storage.getGems(),
-      storage.getCustomizations(settings.workspacePath)
+      storage.getCustomizations(settings.workspacePath),
+      getImageStatus(settings).catch(() => null)
     ]);
 
     res.json({
       settings,
       models: discovery.models,
       providerStatus: discovery.providerStatus,
+      imageStatus,
       chats,
       notebooks,
       artifacts,
@@ -489,27 +501,95 @@ app.post('/api/notebooks/:id/generate', async (req, res) => {
   }
 });
 
-// 11. Images Studio (Local SVG-LLM, Pollinations Flux, OpenAI DALL-E, Local SD WebUI)
+// 11. Images Studio (Qwen 2.1 Image Uncensored local, Nano Banana 2.1 API, SVG-LLM fallback)
 app.get('/api/images', async (req, res) => {
   res.json(await storage.getImages());
 });
 
+app.get('/api/images/status', async (req, res) => {
+  try {
+    const settings = await storage.getSettings();
+    const status = await getImageStatus(settings);
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/images/setup', async (req, res) => {
+  const send = initSse(res);
+  try {
+    const settings = await storage.getSettings();
+    const abortController = new AbortController();
+    req.on('close', () => abortController.abort());
+
+    await setupQwen(settings, (progress) => {
+      send('progress', progress);
+    }, abortController.signal);
+
+    const finalStatus = await getImageStatus(settings);
+    send('done', { ok: true, status: finalStatus });
+    res.end();
+  } catch (err) {
+    send('error', { error: err.message });
+    res.end();
+  }
+});
+
 app.post('/api/images/generate', async (req, res) => {
   try {
-    const { prompt, provider: reqProvider, style = 'vivid', previousSvg = '' } = req.body || {};
-    const settings = await storage.getSettings();
-    const imgProvider = reqProvider || settings.imageProvider || 'svg-llm';
-
-    let imageRecord = {
-      id: `img-${Date.now()}`,
+    const {
       prompt,
-      provider: imgProvider,
-      createdAt: new Date().toISOString()
-    };
+      provider: reqProvider,
+      aspectRatio = '1:1',
+      imageSize = '1K',
+      style = 'vivid',
+      referenceImage,
+      previousSvg = '',
+      seed
+    } = req.body || {};
 
-    if (imgProvider === 'pollinations') {
-      const seed = Math.floor(Math.random() * 1000000);
-      imageRecord.imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt + ', ' + style)}?width=1024&height=640&seed=${seed}&nologo=true`;
+    if (!prompt || !prompt.trim()) {
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    const settings = await storage.getSettings();
+    const imgProvider = reqProvider || settings.imageProvider || 'qwen-image-local';
+
+    let imageRecord;
+
+    if (imgProvider === 'qwen-image-local') {
+      imageRecord = await generateQwenLocal({
+        prompt,
+        aspectRatio,
+        style,
+        seed
+      }, settings);
+    } else if (imgProvider === 'nano-banana') {
+      imageRecord = await generateNanoBanana({
+        prompt,
+        aspectRatio,
+        imageSize,
+        referenceImage
+      }, settings);
+    } else if (imgProvider === 'pollinations') {
+      const rndSeed = seed || Math.floor(Math.random() * 1000000);
+      const dims = {
+        '1:1': [1024, 1024],
+        '16:9': [1280, 720],
+        '9:16': [720, 1280],
+        '4:3': [1024, 768],
+        '3:4': [768, 1024]
+      }[aspectRatio] || [1024, 1024];
+      imageRecord = {
+        id: `img-${Date.now()}`,
+        prompt,
+        provider: 'pollinations',
+        model: 'Pollinations Flux',
+        imageUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt + ', ' + style)}?width=${dims[0]}&height=${dims[1]}&seed=${rndSeed}&nologo=true`,
+        aspectRatio,
+        createdAt: new Date().toISOString()
+      };
     } else if (imgProvider === 'openai' && settings.openaiApiKey) {
       const r = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
@@ -521,12 +601,21 @@ app.post('/api/images/generate', async (req, res) => {
           model: 'dall-e-3',
           prompt,
           n: 1,
-          size: '1024x1024'
+          size: aspectRatio === '16:9' ? '1792x1024' : aspectRatio === '9:16' ? '1024x1792' : '1024x1024'
         })
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error?.message || 'OpenAI image generation failed');
-      imageRecord.imageUrl = data.data?.[0]?.url;
+      imageRecord = {
+        id: `img-${Date.now()}`,
+        prompt,
+        provider: 'openai',
+        model: 'DALL-E 3',
+        imageUrl: data.data?.[0]?.url,
+        caption: data.data?.[0]?.revised_prompt,
+        aspectRatio,
+        createdAt: new Date().toISOString()
+      };
     } else if (imgProvider === 'sd-webui') {
       const sdBase = (settings.sdWebUiUrl || 'http://127.0.0.1:7860').replace(/\/+$/, '');
       const r = await fetch(`${sdBase}/sdapi/v1/txt2img`, {
@@ -536,9 +625,17 @@ app.post('/api/images/generate', async (req, res) => {
       });
       if (!r.ok) throw new Error('Local Stable Diffusion WebUI not reachable at ' + sdBase);
       const data = await r.json();
-      imageRecord.imageUrl = `data:image/png;base64,${data.images[0]}`;
+      imageRecord = {
+        id: `img-${Date.now()}`,
+        prompt,
+        provider: 'sd-webui',
+        model: 'Local SD WebUI',
+        imageUrl: `data:image/png;base64,${data.images[0]}`,
+        aspectRatio,
+        createdAt: new Date().toISOString()
+      };
     } else {
-      // Local AI Vector Art Studio — works 100% offline with any local Ollama/LM Studio model!
+      // Local AI Vector Art Studio fallback
       const resp = await streamChatCompletion({
         provider: settings.selectedProvider,
         model: settings.selectedModel,
@@ -559,9 +656,17 @@ app.post('/api/images/generate', async (req, res) => {
       });
 
       const svgMatch = (resp.content || '').match(/<svg[\s\S]*?<\/svg>/i);
-      imageRecord.svgContent = svgMatch
-        ? svgMatch[0]
-        : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500"><rect width="800" height="500" fill="#eff6ff"/><text x="400" y="250" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#1e3a8a">${prompt.replace(/[<>&]/g, '')}</text></svg>`;
+      imageRecord = {
+        id: `img-${Date.now()}`,
+        prompt,
+        provider: 'svg-llm',
+        model: settings.selectedModel || 'Local LLM SVG',
+        svgContent: svgMatch
+          ? svgMatch[0]
+          : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500"><rect width="800" height="500" fill="#eff6ff"/><text x="400" y="250" text-anchor="middle" font-family="sans-serif" font-size="22" fill="#1e3a8a">${prompt.replace(/[<>&]/g, '')}</text></svg>`,
+        aspectRatio,
+        createdAt: new Date().toISOString()
+      };
     }
 
     const images = await storage.getImages();

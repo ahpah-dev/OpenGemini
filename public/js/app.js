@@ -1787,10 +1787,12 @@ class OpenGeminiApp {
             <div>
               <label class="field-label">Default Image Provider</label>
               <select id="st-img-prov" class="select-field">
-                <option value="svg-llm" ${s.imageProvider === 'svg-llm' ? 'selected' : ''}>Local LLM Vector Studio</option>
-                <option value="pollinations" ${s.imageProvider === 'pollinations' ? 'selected' : ''}>Pollinations Flux</option>
-                <option value="openai" ${s.imageProvider === 'openai' ? 'selected' : ''}>OpenAI DALL-E 3</option>
-                <option value="sd-webui" ${s.imageProvider === 'sd-webui' ? 'selected' : ''}>Local SD WebUI</option>
+                <option value="qwen-image-local" ${s.imageProvider === 'qwen-image-local' ? 'selected' : ''}>⚡ Qwen 2.1 Image Uncensored (Local GGUF)</option>
+                <option value="nano-banana" ${s.imageProvider === 'nano-banana' ? 'selected' : ''}>🍌 Nano Banana 2.1 (Google Gemini API)</option>
+                <option value="svg-llm" ${s.imageProvider === 'svg-llm' ? 'selected' : ''}>🎨 Local LLM Vector Studio (SVG)</option>
+                <option value="pollinations" ${s.imageProvider === 'pollinations' ? 'selected' : ''}>Pollinations Flux (Zero-Key)</option>
+                <option value="openai" ${s.imageProvider === 'openai' ? 'selected' : ''}>OpenAI DALL-E 3 (BYOK)</option>
+                <option value="sd-webui" ${s.imageProvider === 'sd-webui' ? 'selected' : ''}>Local SD WebUI (127.0.0.1:7860)</option>
               </select>
             </div>
           </div>
